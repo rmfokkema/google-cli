@@ -1,0 +1,129 @@
+#!/bin/zsh
+export LANG="nl_NL.UTF-8"
+
+[[ $# -eq 0 ]] && { echo Usage: $(basename $0) query page >&2; exit 1 }
+
+QUERY=$1
+PAGE=${2:-0}
+
+URI='search'
+
+LOC='/tmp/.google.123'
+FILE=
+LINKS=()
+HITS=0
+
+R=$RANDOM
+X=
+
+AGENT='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.2 Safari/605.1.15'
+
+###
+
+input()
+{
+  unset X; while [ -z $X ]; do echo -ne '\r? '; read X; done; echo
+
+  [[ $PAGE == 0 ]] && return 0
+
+  if [[ $X =~ '^[0-9]+$' ]]
+  then
+    open -a Safari $LINKS[X]
+    echo 'Opening...' $LINKS[X]
+    return 0
+  fi
+
+  [[ $X == '..' ]] && return 0
+}
+
+htmll() { xmllint --nowarning --html --xpath $2 $1 2>/dev/null }
+
+search()
+{
+    FILE="google.$PAGE.htm"
+
+    if [[ $PAGE == 0 ]]
+    then
+        rm -rf /tmp/.google.123
+        mkdir /tmp/.google.123
+        #mkdir $LOC/.google.$R
+        #LOC=$LOC/.google.$R
+        startQuery="q=$QUERY"
+    else
+      unset startQuery
+    fi
+
+    curl -GsA "$AGENT" -D "/tmp/.google.123/headers.log" "https://www.google.com/$URI" --data-urlencode "$startQuery" -o $LOC/$FILE
+
+    sed -i '' 's/<head>/<head><meta charset="utf-8">/; s/<g-dialog/<!-- g-dialog/; s/<\/g-dialog>/<\/g-dialog -->/' $LOC/$FILE
+    #cp /tmp/.google.123/$FILE $LOC/$FILE
+
+    URI=$(htmll $LOC/$FILE 'string(//td[@role="heading"]/a/@href)')
+    URI=${URI:1}
+}
+
+results()
+{
+      N=$(htmll $LOC/$FILE 'count(//div[@id="search"]//div[@class="rc"])')
+
+      for i in {1..$N}
+      do
+        {
+          #titel
+          echo -n $(( i + HITS ))') '
+          htmll $LOC/$FILE 'string((//div[@id="search"]//div[@class="rc"])['$i']/div[1]//h3)' | sed 's/\.\.\.//'
+          echo
+
+          #description
+          #echo -n "...$LOC/$FILE (i=$i)"
+          desc=$(htmll $LOC/$FILE 'string((//div[@id="search"]//div[@class="rc"])['$i']/div[2]//span)' | sed 's/\.\.\.//')
+          [[ -z $desc ]] && desc=$(htmll $LOC/$FILE 'string((//div[@id="search"]//div[@class="rc"])[2]/div[2]/div[not(@*)]//span)')
+
+          echo -n "...$desc"
+        } | fold -sw 72
+
+        echo
+        echo
+
+        #link
+        LINKS+=$(htmll $LOC/$FILE 'string((//div[@id="search"]//div[@class="rc"])['$i']/div/a/@href)')
+      done
+
+    (( HITS += N ))
+    (( PAGE++ ))
+}
+
+main() {
+
+    if [[ $PAGE == 0 ]]; then
+          case $QUERY in
+            '')
+            input
+            QUERY=X
+            ;;
+
+            '-')
+            if [[ -d /tmp/.google.123 ]]; then
+              LOC=/tmp/.google.123
+              FILE=google.$PAGE.htm
+              results
+            else
+              echo 'No recent searches!' >&2
+              return 1
+            fi
+            ;;
+          esac
+    fi
+
+    while true; do
+      search
+      results
+      input
+
+      [[ $? != 0 ]] && { echo -e 'Thank you for using Google.\n' >&2; break }
+    done
+}
+
+###
+
+main;
